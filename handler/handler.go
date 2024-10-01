@@ -11,23 +11,155 @@ import (
 	"github.com/google/uuid"
 )
 
-var users []string = []string{"usersatu", "userdua"}
-var sessions map[string]string = map[string]string{}
+const TOKEN_EXPIRE_TIME = 20 * 60 // Seconds
+
+type User struct {
+    userid int
+    username string
+    password string
+    Name string
+}
 
 
-func createNewSession(username string) string {
+type Session struct {
+    sessionid int
+    session_token string
+    userid int
+    expire time.Time
+}
+
+func (s Session) isExpired () bool {
+    return time.Now().After(s.expire)
+}
+
+
+var users []User = []User{
+    User{
+        userid: 1,
+        username: "usersatu",
+        password: "pw",
+        Name: "User Satu",
+    },
+    User{
+        userid: 2,
+        username: "userdua",
+        password: "pw",
+        Name: "User Dua",
+    },
+}
+var sessions []Session = []Session {}
+
+
+func getSessionByToken(session_token string) (*Session, bool) {
+    for i := range sessions {
+        session := &sessions[i]
+        if session.session_token == session_token {
+            return session, true
+        }
+    }
+
+    return &Session{}, false
+}
+
+
+func getUserByUserID(userid int) (User, bool) {
+    for _, user := range users {
+        if user.userid == userid {
+            return user, true
+        }
+    }
+    
+    return User{}, false
+}
+
+
+func getUserByUsername(username string) (User, bool) {
+    for _, user := range users {
+        if user.username == username {
+            return user, true
+        }
+    }
+    
+    return User{}, false
+}
+
+
+func validateUser(username string, password string) bool {
+    user, exists := getUserByUsername(username)
+    if !exists {
+        return false
+    }
+
+    if user.password != password {
+        return false
+    }
+
+    return true
+}
+
+
+func createNewSession(username string) Session {
     var generated bool = false
     var newToken string
+
+    var newSessionID int = 0
+    for _, session := range sessions {
+        if session.sessionid >= newSessionID {
+            newSessionID = session.sessionid + 1
+        }
+    }
+
+    var newSession Session
     for !generated {
         newToken = uuid.NewString()
-        _, exists := sessions[newToken]
+        _, exists := getSessionByToken(newToken)
         if !exists {
-            sessions[newToken] = username
+            user, _ := getUserByUsername(username)
+            userid := user.userid
+            newSession = Session{
+                sessionid: newSessionID,
+                session_token: newToken,
+                userid: userid,
+                expire: time.Now().Add(TOKEN_EXPIRE_TIME * time.Second),
+            }
+            sessions = append(sessions, newSession)
             generated = true
         }
     }
     
-    return newToken
+    return newSession
+}
+
+
+func removeSessionByToken(session_token string) error {
+    sessions = slices.DeleteFunc(
+        sessions,
+        func(s Session) bool {
+            return s.session_token == session_token
+        },
+    )
+    return nil
+}
+
+
+func refreshSessionByToken(session_token string) error {
+    session, exists := getSessionByToken(session_token)
+    if !exists {
+        return fmt.Errorf("Session invalid or missing.")
+    }
+
+    session.expire = time.Now().Add(TOKEN_EXPIRE_TIME * time.Second)
+    return nil
+}
+
+
+func createSessionCookieFromSession(session *Session) (http.Cookie, error) {
+    session_cookie := http.Cookie{
+        Name: "session-cookie",
+        Value: session.session_token,
+        Expires: session.expire,
+    }
+    return session_cookie, nil
 }
 
 
@@ -71,8 +203,10 @@ func Login_handler(w http.ResponseWriter, r *http.Request) {
     }
 
     username := r.FormValue("username")
+    password := r.FormValue("password")
     log.Printf("username: %s\n", username)
-    if username == "" {
+    log.Printf("password: %s\n", password)
+    if username == "" || password == "" {
         error_message := []byte(
                 fmt.Sprintf(
                     "%d - Insufficient Params.",
@@ -84,11 +218,11 @@ func Login_handler(w http.ResponseWriter, r *http.Request) {
         return
     }
     
-    var userexists bool = slices.Contains(users, username)
-    if !userexists {
+    var credential_valid bool = validateUser(username, password)
+    if !credential_valid {
         error_message := []byte(
                 fmt.Sprintf(
-                    "%d - User Doesn't Exist.",
+                    "%d - Invalid Credentials.",
                     http.StatusUnauthorized,
                     ),
                 )
@@ -97,11 +231,18 @@ func Login_handler(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-    session_token := createNewSession(username)
-    session_cookie := http.Cookie{
-        Name: "session-cookie",
-        Value: session_token,
-        Expires: time.Now().Add(time.Minute*2),
+    session := createNewSession(username)
+    session_cookie, err := createSessionCookieFromSession(&session)
+    if err != nil {
+        error_message := []byte(
+                fmt.Sprintf(
+                    "%d - Trouble when Creating Cookie.",
+                    http.StatusInternalServerError,
+                    ),
+                )
+        w.WriteHeader(http.StatusInternalServerError)
+        w.Write(error_message)
+        return
     }
     http.SetCookie(w, &session_cookie)
 }
@@ -123,7 +264,8 @@ func CheckSession_handler(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-    username, exists := sessions[session_cookie.Value]
+    session, exists := getSessionByToken(session_cookie.Value)
+    userid := session.userid
     if !exists {
         error_message := []byte(
                 fmt.Sprintf(
@@ -136,8 +278,110 @@ func CheckSession_handler(w http.ResponseWriter, r *http.Request) {
         return
     }
     
-    io.WriteString(w, fmt.Sprintf("Valid session for username: %s", username))
+    user, exists := getUserByUserID(userid)
+    if !exists {
+        error_message := []byte(
+                fmt.Sprintf(
+                    "%d - invalid Credentials.",
+                    http.StatusUnauthorized,
+                    ),
+                )
+        w.WriteHeader(http.StatusUnauthorized)
+        w.Write(error_message)
+        return
+    }
+
+    if session.isExpired() {
+        removeSessionByToken(session.session_token)
+
+        error_message := []byte(
+                fmt.Sprintf(
+                    "%d - invalid Credentials.",
+                    http.StatusUnauthorized,
+                    ),
+                )
+        w.WriteHeader(http.StatusUnauthorized)
+        w.Write(error_message)
+        return
+    }
+
+    io.WriteString(w, fmt.Sprintf("Valid session for user: %s", user.Name))
 }
+
+
+func RefreshSession_handler(w http.ResponseWriter, r *http.Request) {
+    log.Println("getting request on RefreshSession_handler")
+
+    session_cookie, err := r.Cookie("session-cookie")
+    if err != nil {
+        error_message := []byte(
+                fmt.Sprintf(
+                    "%d - Missing Session Cookie.",
+                    http.StatusUnauthorized,
+                    ),
+                )
+        w.WriteHeader(http.StatusUnauthorized)
+        w.Write(error_message)
+        return
+    }
+
+    session, exists := getSessionByToken(session_cookie.Value)
+    if !exists {
+        error_message := []byte(
+                fmt.Sprintf(
+                    "%d - Invalid Session.",
+                    http.StatusUnauthorized,
+                    ),
+                )
+        w.WriteHeader(http.StatusUnauthorized)
+        w.Write(error_message)
+        return
+    }
+    
+    if session.isExpired() {
+        removeSessionByToken(session.session_token)
+
+        error_message := []byte(
+                fmt.Sprintf(
+                    "%d - Session Already Expired.",
+                    http.StatusUnauthorized,
+                    ),
+                )
+        w.WriteHeader(http.StatusUnauthorized)
+        w.Write(error_message)
+        return
+    }
+
+    err = refreshSessionByToken(session.session_token)
+    if err != nil {
+        error_message := []byte(
+                fmt.Sprintf(
+                    "%d - Error when Refreshing Token.",
+                    http.StatusInternalServerError,
+                    ),
+                )
+        w.WriteHeader(http.StatusInternalServerError)
+        w.Write(error_message)
+        return
+    }
+    
+    session, _ = getSessionByToken(session.session_token)
+    new_session_cookie, err := createSessionCookieFromSession(session)
+    if err != nil {
+        error_message := []byte(
+                fmt.Sprintf(
+                    "%d - Trouble when Creating Cookie.",
+                    http.StatusInternalServerError,
+                    ),
+                )
+        w.WriteHeader(http.StatusInternalServerError)
+        w.Write(error_message)
+        return
+    }
+    http.SetCookie(w, &new_session_cookie)
+    io.WriteString(w, "Successfuly refreshing token")
+}
+
 
 
 func Logout_handler(w http.ResponseWriter, r *http.Request) {
@@ -155,7 +399,7 @@ func Logout_handler(w http.ResponseWriter, r *http.Request) {
         return
     }
     
-    _, exists := sessions[session_cookie.Value]
+    _, exists := getSessionByToken(session_cookie.Value)
     if !exists {
         error_message := []byte(
                 fmt.Sprintf(
@@ -168,7 +412,7 @@ func Logout_handler(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-    delete(sessions, session_cookie.Value)
+    removeSessionByToken(session_cookie.Value)
     io.WriteString(
         w,
         fmt.Sprintf(
