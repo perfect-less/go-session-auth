@@ -178,27 +178,13 @@ func Login_handler(w http.ResponseWriter, r *http.Request) {
     log.Printf("getting %s request on Login_handler\n", r.Method)
 
     if r.Method != "POST" {
-        error_message := []byte(
-                fmt.Sprintf(
-                    "%d - Only POST request allowed.",
-                    http.StatusBadRequest,
-                    ),
-                )
-        w.WriteHeader(http.StatusBadRequest)
-        w.Write(error_message)
+        http.Error(w, "Only POST request allowed.", http.StatusBadRequest)
         return
     }
 
     err := r.ParseForm()
     if err != nil {
-        error_message := []byte(
-                fmt.Sprintf(
-                    "%d - Trouble when Parsing The Form.",
-                    http.StatusInternalServerError,
-                    ),
-                )
-        w.WriteHeader(http.StatusInternalServerError)
-        w.Write(error_message)
+        http.Error(w, "Trouble when Parsing The Form.", http.StatusInternalServerError)
         return
     }
 
@@ -207,41 +193,20 @@ func Login_handler(w http.ResponseWriter, r *http.Request) {
     log.Printf("username: %s\n", username)
     log.Printf("password: %s\n", password)
     if username == "" || password == "" {
-        error_message := []byte(
-                fmt.Sprintf(
-                    "%d - Insufficient Params.",
-                    http.StatusBadRequest,
-                    ),
-                )
-        w.WriteHeader(http.StatusBadRequest)
-        w.Write(error_message)
+        http.Error(w, "Insufficient Params.", http.StatusBadRequest)
         return
     }
     
     var credential_valid bool = validateUser(username, password)
     if !credential_valid {
-        error_message := []byte(
-                fmt.Sprintf(
-                    "%d - Invalid Credentials.",
-                    http.StatusUnauthorized,
-                    ),
-                )
-        w.WriteHeader(http.StatusUnauthorized)
-        w.Write(error_message)
+        http.Error(w, "Invalid Credentials.", http.StatusUnauthorized)
         return
     }
 
     session := createNewSession(username)
     session_cookie, err := createSessionCookieFromSession(&session)
     if err != nil {
-        error_message := []byte(
-                fmt.Sprintf(
-                    "%d - Trouble when Creating Cookie.",
-                    http.StatusInternalServerError,
-                    ),
-                )
-        w.WriteHeader(http.StatusInternalServerError)
-        w.Write(error_message)
+        http.Error(w, "Trouble when Creating Cookie.", http.StatusInternalServerError)
         return
     }
     http.SetCookie(w, &session_cookie)
@@ -253,55 +218,27 @@ func CheckSession_handler(w http.ResponseWriter, r *http.Request) {
 
     session_cookie, err := r.Cookie("session-cookie")
     if err != nil {
-        error_message := []byte(
-                fmt.Sprintf(
-                    "%d - Missing Session Cookie.",
-                    http.StatusUnauthorized,
-                    ),
-                )
-        w.WriteHeader(http.StatusUnauthorized)
-        w.Write(error_message)
+        http.Error(w, "Missing Session Cookie.", http.StatusUnauthorized)
         return
     }
 
     session, exists := getSessionByToken(session_cookie.Value)
     userid := session.userid
     if !exists {
-        error_message := []byte(
-                fmt.Sprintf(
-                    "%d - Invalid Session.",
-                    http.StatusUnauthorized,
-                    ),
-                )
-        w.WriteHeader(http.StatusUnauthorized)
-        w.Write(error_message)
+        http.Error(w, "Invalid Session.", http.StatusUnauthorized)
         return
     }
     
     user, exists := getUserByUserID(userid)
     if !exists {
-        error_message := []byte(
-                fmt.Sprintf(
-                    "%d - invalid Credentials.",
-                    http.StatusUnauthorized,
-                    ),
-                )
-        w.WriteHeader(http.StatusUnauthorized)
-        w.Write(error_message)
+        http.Error(w, "invalid Credentials.", http.StatusUnauthorized)
         return
     }
 
     if session.isExpired() {
         removeSessionByToken(session.session_token)
 
-        error_message := []byte(
-                fmt.Sprintf(
-                    "%d - invalid Credentials.",
-                    http.StatusUnauthorized,
-                    ),
-                )
-        w.WriteHeader(http.StatusUnauthorized)
-        w.Write(error_message)
+        http.Error(w, "invalid Credentials.", http.StatusUnauthorized)
         return
     }
 
@@ -314,68 +251,33 @@ func RefreshSession_handler(w http.ResponseWriter, r *http.Request) {
 
     session_cookie, err := r.Cookie("session-cookie")
     if err != nil {
-        error_message := []byte(
-                fmt.Sprintf(
-                    "%d - Missing Session Cookie.",
-                    http.StatusUnauthorized,
-                    ),
-                )
-        w.WriteHeader(http.StatusUnauthorized)
-        w.Write(error_message)
+        http.Error(w, "Missing Session Cookie.", http.StatusUnauthorized)
         return
     }
 
     session, exists := getSessionByToken(session_cookie.Value)
     if !exists {
-        error_message := []byte(
-                fmt.Sprintf(
-                    "%d - Invalid Session.",
-                    http.StatusUnauthorized,
-                    ),
-                )
-        w.WriteHeader(http.StatusUnauthorized)
-        w.Write(error_message)
+        http.Error(w, "Invalid Session.", http.StatusUnauthorized)
         return
     }
     
     if session.isExpired() {
         removeSessionByToken(session.session_token)
 
-        error_message := []byte(
-                fmt.Sprintf(
-                    "%d - Session Already Expired.",
-                    http.StatusUnauthorized,
-                    ),
-                )
-        w.WriteHeader(http.StatusUnauthorized)
-        w.Write(error_message)
+        http.Error(w, "Session Already Expired.", http.StatusUnauthorized)
         return
     }
 
     err = refreshSessionByToken(session.session_token)
     if err != nil {
-        error_message := []byte(
-                fmt.Sprintf(
-                    "%d - Error when Refreshing Token.",
-                    http.StatusInternalServerError,
-                    ),
-                )
-        w.WriteHeader(http.StatusInternalServerError)
-        w.Write(error_message)
+        http.Error(w, "Error when Refreshing Token.", http.StatusInternalServerError)
         return
     }
     
     session, _ = getSessionByToken(session.session_token)
     new_session_cookie, err := createSessionCookieFromSession(session)
     if err != nil {
-        error_message := []byte(
-                fmt.Sprintf(
-                    "%d - Trouble when Creating Cookie.",
-                    http.StatusInternalServerError,
-                    ),
-                )
-        w.WriteHeader(http.StatusInternalServerError)
-        w.Write(error_message)
+        http.Error(w, "Trouble when Creating Cookie.", http.StatusInternalServerError)
         return
     }
     http.SetCookie(w, &new_session_cookie)
@@ -388,27 +290,13 @@ func Logout_handler(w http.ResponseWriter, r *http.Request) {
     log.Println("getting request on Logout_handler")
     session_cookie, err := r.Cookie("session-cookie")
     if err != nil {
-        error_message := []byte(
-                fmt.Sprintf(
-                    "%d - Missing Session Cookie.",
-                    http.StatusUnauthorized,
-                    ),
-                )
-        w.WriteHeader(http.StatusUnauthorized)
-        w.Write(error_message)
+        http.Error(w, "Missing Session Cookie.", http.StatusUnauthorized)
         return
     }
     
     _, exists := getSessionByToken(session_cookie.Value)
     if !exists {
-        error_message := []byte(
-                fmt.Sprintf(
-                    "%d - Invalid Session.",
-                    http.StatusUnauthorized,
-                    ),
-                )
-        w.WriteHeader(http.StatusUnauthorized)
-        w.Write(error_message)
+        http.Error(w, "Invalid Session.", http.StatusUnauthorized)
         return
     }
 
