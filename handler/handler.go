@@ -37,7 +37,7 @@ var users []User = []User{
     User{
         userid: 1,
         username: "usersatu",
-        password: "pw",
+        password: "password",
         Name: "User Satu",
     },
     User{
@@ -182,14 +182,15 @@ func Login_handler(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-    err := r.ParseForm()
+    err := r.ParseMultipartForm(2 << 20)
     if err != nil {
+        log.Printf(err.Error())
         http.Error(w, "Trouble when Parsing The Form.", http.StatusInternalServerError)
         return
     }
 
-    username := r.FormValue("username")
-    password := r.FormValue("password")
+    username := r.PostFormValue("username")
+    password := r.PostFormValue("password")
     log.Printf("username: %s\n", username)
     log.Printf("password: %s\n", password)
     if username == "" || password == "" {
